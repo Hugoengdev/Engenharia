@@ -4,90 +4,61 @@ import { useState } from "react";
 import { Upload, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
+import { upload } from "@vercel/blob/client";
 import { Button } from "@/components/ui/button";
 import { formatBytes } from "@/lib/utils";
-import { createClient } from "@/lib/supabase/client";
 
 interface Props {
   projectId: string;
   hasIfc: boolean;
 }
 
-/** Same order of magnitude as Supabase free-tier file limits (see migrations). */
-const STAGED_UPLOAD_MAX_BYTES = 50 * 1024 * 1024;
+/** Vercel Serverless request body limit — direct POST to our API above this fails with 413. */
+const VERCEL_SAFE_DIRECT_BYTES = 4_500_000;
+
+function stagingPathname(projectId: string): string {
+  return `ifc-staging/${projectId}/model.ifc`;
+}
 
 /**
- * IFC upload flow:
- *
- *   1. **Staged (default for files ≤ 50 MB)** — the browser uploads directly to
- *      the private `ifc-files` bucket (path `{owner_id}/{project_id}/model.ifc`),
- *      then updates the `projects` row and calls `POST /api/ifc/migrate/:id` so
- *      the server copies bytes to GitHub with the PAT. This avoids sending the
- *      whole model through Next.js / Vercel, where request bodies are capped at
- *      ~4.5 MB and trigger HTTP 413.
- *
- *   2. **Direct (files > 50 MB)** — legacy `POST /api/ifc/upload/:id` with XHR
- *      progress. Works on self-hosted Node (raise reverse-proxy limits); on
- *      Vercel it will still fail with 413 until a different transport exists.
+ * IFC uploads go to GitHub Releases (server PAT). Bodies cannot pass through
+ * Next.js on Vercel beyond ~4.5 MB (413). When `BLOB_READ_WRITE_TOKEN` is set,
+ * we stage via Vercel Blob (browser → Blob → server stream → GitHub), not
+ * Supabase Storage — so models can exceed 50 MB.
  */
 export function IfcUploader({ projectId, hasIfc }: Props) {
   const router = useRouter();
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState<number | null>(null);
 
-  async function uploadViaStaging(file: File) {
-    const supabase = createClient();
-    const {
-      data: { user },
-      error: authErr,
-    } = await supabase.auth.getUser();
-    if (authErr || !user) {
-      throw new Error("Sessão inválida. Inicie sessão novamente.");
-    }
+  async function uploadViaBlobThenGithub(file: File) {
+    const pathname = stagingPathname(projectId);
+    const blobResult = await upload(pathname, file, {
+      access: "private",
+      handleUploadUrl: "/api/ifc/blob-client",
+      clientPayload: JSON.stringify({ projectId }),
+      contentType: "application/octet-stream",
+      multipart: file.size >= 8 * 1024 * 1024,
+      onUploadProgress: ({ percentage }) => {
+        setProgress(Math.min(88, Math.round(percentage * 0.88)));
+      },
+    });
 
-    const storagePath = `${user.id}/${projectId}/model.ifc`;
-
-    setProgress(8);
-    const { error: upErr } = await supabase.storage
-      .from("ifc-files")
-      .upload(storagePath, file, {
-        upsert: true,
-        contentType: "application/octet-stream",
-        cacheControl: "3600",
-      });
-    if (upErr) {
-      throw new Error(
-        upErr.message ||
-          "Não foi possível enviar o ficheiro para o armazenamento."
-      );
-    }
-
-    setProgress(35);
-    const { error: dbErr } = await supabase
-      .from("projects")
-      .update({
-        ifc_path: storagePath,
-        ifc_storage: "supabase",
-        ifc_filename: file.name,
-        ifc_size_bytes: file.size,
-        ifc_release_id: null,
-        ifc_asset_id: null,
-        ifc_asset_name: null,
-      })
-      .eq("id", projectId);
-    if (dbErr) {
-      throw new Error(dbErr.message || "Não foi possível atualizar o projeto.");
-    }
-
-    setProgress(55);
-    const migRes = await fetch(`/api/ifc/migrate/${projectId}`, {
+    setProgress(92);
+    const commitRes = await fetch(`/api/ifc/commit-blob/${projectId}`, {
       method: "POST",
       credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        url: blobResult.url,
+        pathname: blobResult.pathname,
+        filename: file.name,
+      }),
     });
-    if (!migRes.ok) {
-      let msg = `Falha ao publicar o modelo (${migRes.status})`;
+    if (!commitRes.ok) {
+      let msg = `Falha ao publicar no GitHub (${commitRes.status})`;
       try {
-        const body = (await migRes.json()) as { error?: string };
+        const body = (await commitRes.json()) as { error?: string };
         if (body.error) msg = body.error;
       } catch {
         /* ignore */
@@ -115,7 +86,7 @@ export function IfcUploader({ projectId, hasIfc }: Props) {
         } else {
           let msg =
             xhr.status === 413
-              ? "O servidor rejeitou o ficheiro por ser demasiado grande (limite do hosting). Para ficheiros até 50 MB use o envio em duas fases; acima disso é necessário alojamento que aceite pedidos grandes."
+              ? "413: o pedido excede o limite do hosting. Em produção na Vercel defina BLOB_READ_WRITE_TOKEN (Blob) para enviar IFCs grandes."
               : `Upload failed (${xhr.status})`;
           try {
             const body = JSON.parse(xhr.responseText) as { error?: string };
@@ -135,10 +106,18 @@ export function IfcUploader({ projectId, hasIfc }: Props) {
     setUploading(true);
     setProgress(0);
     try {
-      if (file.size <= STAGED_UPLOAD_MAX_BYTES) {
-        await uploadViaStaging(file);
-      } else {
+      const capRes = await fetch("/api/ifc/staging", { credentials: "same-origin" });
+      const cap = (await capRes.json()) as { blobConfigured?: boolean };
+      const blobOk = Boolean(cap.blobConfigured);
+
+      if (blobOk) {
+        await uploadViaBlobThenGithub(file);
+      } else if (file.size <= VERCEL_SAFE_DIRECT_BYTES) {
         await uploadViaDirectApi(file);
+      } else {
+        throw new Error(
+          "Ficheiros IFC grandes precisam de Vercel Blob: crie um store em vercel.com/storage, copie BLOB_READ_WRITE_TOKEN para as variáveis de ambiente do projeto e faça redeploy. (O limite de ~4,5 MB no corpo do pedido impede o envio direto para a API na Vercel.)"
+        );
       }
 
       toast.success(`${file.name} enviado (${formatBytes(file.size)})`);

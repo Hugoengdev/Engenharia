@@ -180,13 +180,14 @@ async function deleteAsset(
  * Asset uploads use a dedicated host (`uploads.github.com`) — not the REST
  * API host — and accept the raw binary as the request body.
  *
- * @param body Either a Buffer, Uint8Array, Blob, or a `ReadableStream`.
+ * @param body Binary body: Buffer, Uint8Array, Blob, or a ReadableStream (stream
+ *   requires `contentLength` — GitHub requires Content-Length on this endpoint).
  */
 export async function uploadAssetToRelease(args: {
   release: Release;
   filename: string;
   contentType: string;
-  body: ArrayBuffer | Uint8Array | Blob;
+  body: ArrayBuffer | Uint8Array | Blob | ReadableStream<Uint8Array>;
   contentLength: number;
 }): Promise<ReleaseAsset> {
   const cfg = getConfig();
@@ -201,6 +202,9 @@ export async function uploadAssetToRelease(args: {
   );
   url.searchParams.set("name", filename);
 
+  const isStream =
+    typeof ReadableStream !== "undefined" && body instanceof ReadableStream;
+
   const res = await fetch(url, {
     method: "POST",
     headers: {
@@ -209,6 +213,7 @@ export async function uploadAssetToRelease(args: {
       "Content-Length": String(contentLength),
     },
     body: body as BodyInit,
+    ...(isStream ? { duplex: "half" as const } : {}),
     cache: "no-store",
     // The GitHub upload endpoint can take a while for big files — no timeout.
   });
@@ -294,8 +299,11 @@ export async function deleteProjectRelease(projectId: string): Promise<void> {
  * Bytes helper: GitHub requires Content-Length on uploads.
  */
 export function byteLengthOf(
-  body: ArrayBuffer | Uint8Array | Blob
+  body: ArrayBuffer | Uint8Array | Blob | ReadableStream<Uint8Array>
 ): number {
+  if (body instanceof ReadableStream) {
+    throw new Error("byteLengthOf: pass contentLength separately for streams");
+  }
   if (body instanceof Blob) return body.size;
   if (body instanceof Uint8Array) return body.byteLength;
   return body.byteLength;
