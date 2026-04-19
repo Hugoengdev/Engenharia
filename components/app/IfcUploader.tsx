@@ -6,57 +6,140 @@ import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { formatBytes } from "@/lib/utils";
+import { createClient } from "@/lib/supabase/client";
 
 interface Props {
   projectId: string;
   hasIfc: boolean;
 }
 
+/** Same order of magnitude as Supabase free-tier file limits (see migrations). */
+const STAGED_UPLOAD_MAX_BYTES = 50 * 1024 * 1024;
+
 /**
- * Sends the IFC to /api/ifc/upload/:projectId, which pushes it to a private
- * GitHub release. This bypasses Supabase Storage's 50 MB per-file cap — the
- * PAT lives only on the server, so the browser never sees it.
+ * IFC upload flow:
+ *
+ *   1. **Staged (default for files ≤ 50 MB)** — the browser uploads directly to
+ *      the private `ifc-files` bucket (path `{owner_id}/{project_id}/model.ifc`),
+ *      then updates the `projects` row and calls `POST /api/ifc/migrate/:id` so
+ *      the server copies bytes to GitHub with the PAT. This avoids sending the
+ *      whole model through Next.js / Vercel, where request bodies are capped at
+ *      ~4.5 MB and trigger HTTP 413.
+ *
+ *   2. **Direct (files > 50 MB)** — legacy `POST /api/ifc/upload/:id` with XHR
+ *      progress. Works on self-hosted Node (raise reverse-proxy limits); on
+ *      Vercel it will still fail with 413 until a different transport exists.
  */
 export function IfcUploader({ projectId, hasIfc }: Props) {
   const router = useRouter();
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState<number | null>(null);
 
+  async function uploadViaStaging(file: File) {
+    const supabase = createClient();
+    const {
+      data: { user },
+      error: authErr,
+    } = await supabase.auth.getUser();
+    if (authErr || !user) {
+      throw new Error("Sessão inválida. Inicie sessão novamente.");
+    }
+
+    const storagePath = `${user.id}/${projectId}/model.ifc`;
+
+    setProgress(8);
+    const { error: upErr } = await supabase.storage
+      .from("ifc-files")
+      .upload(storagePath, file, {
+        upsert: true,
+        contentType: "application/octet-stream",
+        cacheControl: "3600",
+      });
+    if (upErr) {
+      throw new Error(
+        upErr.message ||
+          "Não foi possível enviar o ficheiro para o armazenamento."
+      );
+    }
+
+    setProgress(35);
+    const { error: dbErr } = await supabase
+      .from("projects")
+      .update({
+        ifc_path: storagePath,
+        ifc_storage: "supabase",
+        ifc_filename: file.name,
+        ifc_size_bytes: file.size,
+        ifc_release_id: null,
+        ifc_asset_id: null,
+        ifc_asset_name: null,
+      })
+      .eq("id", projectId);
+    if (dbErr) {
+      throw new Error(dbErr.message || "Não foi possível atualizar o projeto.");
+    }
+
+    setProgress(55);
+    const migRes = await fetch(`/api/ifc/migrate/${projectId}`, {
+      method: "POST",
+      credentials: "same-origin",
+    });
+    if (!migRes.ok) {
+      let msg = `Falha ao publicar o modelo (${migRes.status})`;
+      try {
+        const body = (await migRes.json()) as { error?: string };
+        if (body.error) msg = body.error;
+      } catch {
+        /* ignore */
+      }
+      throw new Error(msg);
+    }
+    setProgress(100);
+  }
+
+  async function uploadViaDirectApi(file: File) {
+    const form = new FormData();
+    form.append("file", file, file.name);
+
+    await new Promise<void>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", `/api/ifc/upload/${projectId}`);
+      xhr.upload.onprogress = (ev) => {
+        if (ev.lengthComputable) {
+          setProgress(Math.round((ev.loaded / ev.total) * 100));
+        }
+      };
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve();
+        } else {
+          let msg =
+            xhr.status === 413
+              ? "O servidor rejeitou o ficheiro por ser demasiado grande (limite do hosting). Para ficheiros até 50 MB use o envio em duas fases; acima disso é necessário alojamento que aceite pedidos grandes."
+              : `Upload failed (${xhr.status})`;
+          try {
+            const body = JSON.parse(xhr.responseText) as { error?: string };
+            if (body.error) msg = body.error;
+          } catch {
+            /* not JSON */
+          }
+          reject(new Error(msg));
+        }
+      };
+      xhr.onerror = () => reject(new Error("Network error during upload"));
+      xhr.send(form);
+    });
+  }
+
   async function handleUpload(file: File) {
     setUploading(true);
     setProgress(0);
     try {
-      const form = new FormData();
-      form.append("file", file, file.name);
-
-      // We use XHR (not fetch) because it's the only way in the browser to
-      // track upload progress. Large IFCs can take a while; the user deserves
-      // to see a percentage.
-      await new Promise<void>((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open("POST", `/api/ifc/upload/${projectId}`);
-        xhr.upload.onprogress = (ev) => {
-          if (ev.lengthComputable) {
-            setProgress(Math.round((ev.loaded / ev.total) * 100));
-          }
-        };
-        xhr.onload = () => {
-          if (xhr.status >= 200 && xhr.status < 300) {
-            resolve();
-          } else {
-            let msg = `Upload failed (${xhr.status})`;
-            try {
-              const body = JSON.parse(xhr.responseText) as { error?: string };
-              if (body.error) msg = body.error;
-            } catch {
-              // not JSON — keep the generic message
-            }
-            reject(new Error(msg));
-          }
-        };
-        xhr.onerror = () => reject(new Error("Network error during upload"));
-        xhr.send(form);
-      });
+      if (file.size <= STAGED_UPLOAD_MAX_BYTES) {
+        await uploadViaStaging(file);
+      } else {
+        await uploadViaDirectApi(file);
+      }
 
       toast.success(`${file.name} enviado (${formatBytes(file.size)})`);
       router.refresh();
