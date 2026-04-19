@@ -1,0 +1,160 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 222 47% 6%;
+    --foreground: 210 40% 98%;
+    --card: 222 47% 8%;
+    --card-foreground: 210 40% 98%;
+    --popover: 222 47% 8%;
+    --popover-foreground: 210 40% 98%;
+    --primary: 199 89% 48%;
+    --primary-foreground: 222 47% 6%;
+    --secondary: 217 33% 17%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 217 33% 14%;
+    --muted-foreground: 215 20% 65%;
+    --accent: 199 89% 48%;
+    --accent-foreground: 222 47% 6%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 217 33% 18%;
+    --input: 217 33% 18%;
+    --ring: 199 89% 48%;
+    --radius: 0.75rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html,
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+}
+
+@layer utilities {
+  .grid-bg {
+    background-image:
+      linear-gradient(to right, hsl(var(--border) / 0.4) 1px, transparent 1px),
+      linear-gradient(to bottom, hsl(var(--border) / 0.4) 1px, transparent 1px);
+    background-size: 56px 56px;
+    mask-image: radial-gradient(ellipse at center, black 30%, transparent 75%);
+  }
+
+  .gradient-text {
+    background: linear-gradient(135deg, hsl(199 89% 60%), hsl(280 89% 70%));
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .glow-shadow {
+    box-shadow:
+      0 0 0 1px hsl(var(--primary) / 0.2),
+      0 8px 60px -12px hsl(var(--primary) / 0.45);
+  }
+}
+
+/* ===== gantt-task-react dark-theme overrides =====
+   Class names are hashed by the library — do not rename. */
+
+/* Outer wrappers: remove the library's default light borders */
+._3_ygE,
+._3ZbQT {
+  border-color: hsl(var(--border) / 0.6) !important;
+  background: transparent !important;
+}
+
+/* Calendar header rows (month + day labels): kill the bright
+   alternating row bg (#f5f5f5) that leaks onto the right of the list */
+._34SS0,
+._34SS0:nth-of-type(even),
+._34SS0:nth-of-type(odd) {
+  background-color: transparent !important;
+}
+
+/* Right divider of the task list (the library draws it light-gray) */
+._2eZzQ {
+  border-right-color: hsl(var(--border) / 0.6) !important;
+}
+
+/* Row backgrounds (SVG rects): dark, with a gentle stripe on even rows */
+._2dZTy {
+  fill: hsl(var(--background)) !important;
+}
+._2dZTy:nth-child(even) {
+  fill: hsl(var(--secondary) / 0.35) !important;
+}
+
+/* Vertical grid lines inside the chart body — thin & subtle */
+._3rUKi,
+._RuwuK,
+._1rLuZ {
+  stroke: hsl(var(--border) / 0.25) !important;
+  stroke-width: 1 !important;
+}
+
+/* Calendar header text (month / day labels) */
+._9w8d5,
+._2q1Kt {
+  fill: hsl(var(--muted-foreground)) !important;
+}
+
+/* Progress text drawn on top of the bars: contrast with cyan bar */
+._3zRJQ {
+  fill: #0f172a !important;
+  font-weight: 600 !important;
+}
+
+/* Task/project bar outlines: remove the thick light outline */
+._35nLX,
+._31ERP {
+  stroke-width: 0 !important;
+}
+
+/* Date axis label strip (bottom) */
+._2TfEi {
+  fill: hsl(var(--muted-foreground)) !important;
+}
+
+/* Horizontal scrollbar: thin and always pinned at the bottom of the chart */
+._2k9Ys {
+  height: 0.8rem !important;
+  scrollbar-width: thin !important;
+}
+._2k9Ys::-webkit-scrollbar {
+  width: 10px !important;
+  height: 10px !important;
+}
+._2k9Ys::-webkit-scrollbar-thumb {
+  background: hsl(var(--secondary)) !important;
+  border: 2px solid transparent !important;
+  border-radius: 8px !important;
+  background-clip: padding-box !important;
+}
+._2k9Ys::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted)) !important;
+  border: 2px solid transparent !important;
+  background-clip: padding-box !important;
+}
+
+/* Vertical scrollbar inside the list */
+._1eT-t::-webkit-scrollbar {
+  width: 10px !important;
+  height: 10px !important;
+}
+._1eT-t::-webkit-scrollbar-thumb {
+  background: hsl(var(--secondary)) !important;
+  border: 2px solid transparent !important;
+  border-radius: 8px !important;
+  background-clip: padding-box !important;
+}
+._1eT-t::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted)) !important;
+}

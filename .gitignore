@@ -1,0 +1,25 @@
+node_modules/
+.next/
+out/
+build/
+dist/
+
+.env
+.env.local
+.env*.local
+
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+.DS_Store
+.vscode/
+.idea/
+
+next-env.d.ts
+.tsbuildinfo
+*.tsbuildinfo
+
+# web-ifc WASM runtime — rehydrated from node_modules via scripts/copy-wasm.mjs
+public/web-ifc/
