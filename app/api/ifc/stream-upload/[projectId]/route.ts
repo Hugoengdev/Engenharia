@@ -119,26 +119,35 @@ export async function POST(
     // --- LAST CHUNK: Assembly & Upload to GitHub ---
     console.log(`[stream-upload] assembling ${totalChunks} chunks for project ${projectId}...`);
     
-    const buffers: Buffer[] = [];
+    const buffers: Buffer[] = new Array(totalChunks);
     const cleanupPaths: string[] = [];
 
     for (let i = 0; i < totalChunks; i++) {
-        const p = `staging/${projectId}/${safeUploadId}/chunk-${String(i).padStart(5, "0")}`;
-        cleanupPaths.push(p);
+      cleanupPaths.push(`staging/${projectId}/${safeUploadId}/chunk-${String(i).padStart(5, "0")}`);
+    }
 
-        const { data: fileData, error: downloadErr } = await supabase.storage
+    // Baixa os chunks simultaneamente em blocos de 15 para estilhaçar o limite de 60 segundos
+    const BATCH_SIZE = 15;
+    for (let i = 0; i < totalChunks; i += BATCH_SIZE) {
+      const batchIndices = Array.from(
+        { length: Math.min(BATCH_SIZE, totalChunks - i) }, 
+        (_, k) => i + k
+      );
+      
+      await Promise.all(
+        batchIndices.map(async (idx) => {
+          const p = cleanupPaths[idx];
+          const { data: fileData, error: downloadErr } = await supabase.storage
             .from("ifc-files")
             .download(p);
-        
-        if (downloadErr || !fileData) {
-            return NextResponse.json(
-                { error: `Chunk ${i} não encontrado (pode ter havido timeout). Tente novamente.` },
-                { status: 500 }
-            );
-        }
-
-        const b = Buffer.from(await fileData.arrayBuffer());
-        buffers.push(b);
+          
+          if (downloadErr || !fileData) {
+            throw new Error(`O pedaço da parte ${idx} falhou ao ser resgatado. Pode ter sido um micro-corte de internet. Tente o upload novamente.`);
+          }
+          
+          buffers[idx] = Buffer.from(await fileData.arrayBuffer());
+        })
+      );
     }
 
     const fullBuffer = Buffer.concat(buffers);
