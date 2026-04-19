@@ -13,13 +13,25 @@ interface Props {
 }
 
 /**
- * Uploads IFC files directly to GitHub Releases via an Edge Runtime API route.
+ * Maximum bytes per chunk. Must be well under Vercel's ~4.5 MB serverless
+ * function body limit. We use 3.5 MB to leave ample headroom.
+ */
+const CHUNK_SIZE = 3.5 * 1024 * 1024; // 3.5 MB
+
+/** Generate a random upload session ID. */
+function newUploadId(): string {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/**
+ * Uploads IFC files to GitHub Releases via chunked API route.
  *
- * The Edge Runtime route (`/api/ifc/stream-upload/:projectId`) has NO body
- * size limit — unlike Vercel Serverless Functions (~4.5 MB). This means we
- * can send files of any size without needing Vercel Blob as a staging area.
+ * Files are split into chunks of ~3.5 MB and sent sequentially to
+ * `/api/ifc/stream-upload/:projectId`. Each chunk is saved to /tmp on
+ * the server. The last chunk triggers assembly + GitHub upload.
  *
- * Flow:  Browser  →  Edge Route (stream-upload)  →  GitHub Releases
+ * This bypasses Vercel's 4.5 MB body limit without requiring Vercel Blob
+ * or any paid service.
  */
 export function IfcUploader({ projectId, hasIfc }: Props) {
   const router = useRouter();
@@ -29,40 +41,43 @@ export function IfcUploader({ projectId, hasIfc }: Props) {
   async function handleUpload(file: File) {
     setUploading(true);
     setProgress(0);
+
     try {
-      // Use XMLHttpRequest to track upload progress (fetch() doesn't support it).
-      await new Promise<void>((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open("POST", `/api/ifc/stream-upload/${projectId}`);
+      const totalChunks = Math.max(1, Math.ceil(file.size / CHUNK_SIZE));
+      const uploadId = newUploadId();
 
-        // Send as raw binary with metadata in headers.
-        xhr.setRequestHeader("Content-Type", "application/octet-stream");
-        xhr.setRequestHeader("X-Filename", file.name);
+      for (let i = 0; i < totalChunks; i++) {
+        const start = i * CHUNK_SIZE;
+        const end = Math.min(start + CHUNK_SIZE, file.size);
+        const chunk = file.slice(start, end);
 
-        xhr.upload.onprogress = (ev) => {
-          if (ev.lengthComputable) {
-            setProgress(Math.round((ev.loaded / ev.total) * 100));
+        const res = await fetch(`/api/ifc/stream-upload/${projectId}`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/octet-stream",
+            "X-Upload-Id": uploadId,
+            "X-Chunk-Index": String(i),
+            "X-Total-Chunks": String(totalChunks),
+            "X-Filename": file.name,
+          },
+          body: chunk,
+        });
+
+        if (!res.ok) {
+          let msg = `Upload falhou (${res.status})`;
+          try {
+            const body = (await res.json()) as { error?: string };
+            if (body.error) msg = body.error;
+          } catch {
+            /* not JSON */
           }
-        };
+          throw new Error(msg);
+        }
 
-        xhr.onload = () => {
-          if (xhr.status >= 200 && xhr.status < 300) {
-            resolve();
-          } else {
-            let msg = `Upload falhou (${xhr.status})`;
-            try {
-              const body = JSON.parse(xhr.responseText) as { error?: string };
-              if (body.error) msg = body.error;
-            } catch {
-              /* not JSON */
-            }
-            reject(new Error(msg));
-          }
-        };
-
-        xhr.onerror = () => reject(new Error("Erro de rede durante o upload"));
-        xhr.send(file);
-      });
+        // Progress: each chunk contributes equally
+        const pct = Math.round(((i + 1) / totalChunks) * 100);
+        setProgress(pct);
+      }
 
       toast.success(`${file.name} enviado (${formatBytes(file.size)})`);
       router.refresh();
