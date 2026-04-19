@@ -1,7 +1,14 @@
 import Link from "next/link";
 import { Building2, LayoutGrid } from "lucide-react";
+import { UserMenu } from "@/components/auth/UserMenu";
 
-export function AppShell({ children }: { children: React.ReactNode }) {
+export function AppShell({
+  children,
+  userEmail,
+}: {
+  children: React.ReactNode;
+  userEmail: string | null;
+}) {
   return (
     <div className="flex min-h-screen flex-col">
       <header className="sticky top-0 z-40 border-b border-border/40 bg-background/70 backdrop-blur-xl">
@@ -33,9 +40,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
 
           <div className="flex items-center gap-2">
-            <span className="rounded-md border border-border/60 bg-card/40 px-2 py-0.5 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-              Dev mode
-            </span>
+            {userEmail ? (
+              <UserMenu email={userEmail} />
+            ) : null}
           </div>
         </div>
       </header>

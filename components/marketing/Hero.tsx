@@ -97,7 +97,7 @@ export function Hero() {
 
         <div className="pointer-events-auto mt-10 flex flex-wrap items-center justify-center gap-3">
           <Button size="lg" asChild>
-            <Link href="/dashboard">
+            <Link href="/login">
               Abrir app
               <ArrowRight className="h-4 w-4" />
             </Link>

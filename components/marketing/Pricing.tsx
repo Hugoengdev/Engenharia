@@ -108,7 +108,7 @@ export function Pricing() {
                 variant={p.highlight ? "default" : "outline"}
                 asChild
               >
-                <Link href="/dashboard">{p.cta}</Link>
+                <Link href="/login">{p.cta}</Link>
               </Button>
             </div>
           ))}

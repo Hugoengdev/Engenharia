@@ -23,7 +23,7 @@ export function CTA() {
             </div>
             <div className="flex flex-wrap gap-3 lg:justify-end">
               <Button size="lg" asChild>
-                <Link href="/dashboard">
+                <Link href="/login">
                   Abrir app
                   <ArrowRight className="h-4 w-4" />
                 </Link>

@@ -49,7 +49,7 @@ export function Navbar() {
 
         <div className="flex items-center gap-2">
           <Button size="sm" asChild>
-            <Link href="/dashboard">Abrir app</Link>
+            <Link href="/login">Abrir app</Link>
           </Button>
         </div>
       </div>
