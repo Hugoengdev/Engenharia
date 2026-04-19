@@ -1,5 +1,5 @@
--- BEFORE INSERT em auth.users: preenche email_confirmed_at / confirmed_at no próprio NEW.
--- (AFTER INSERT + UPDATE na mesma linha quebrava o Auth: "Database error saving new user".)
+-- O trigger AFTER INSERT + UPDATE em auth.users quebrava o signup no Supabase Auth
+-- ("Database error saving new user"). BEFORE INSERT só preenche NEW, sem UPDATE na mesma linha.
 
 create or replace function public.confirm_email_on_auth_user_created()
 returns trigger
