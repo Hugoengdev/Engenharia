@@ -16,7 +16,7 @@ interface Props {
  * Maximum bytes per chunk. Must be well under Vercel's ~4.5 MB serverless
  * function body limit. We use 3.5 MB to leave ample headroom.
  */
-const CHUNK_SIZE = 3.5 * 1024 * 1024; // 3.5 MB
+const CHUNK_SIZE = 2 * 1024 * 1024; // 2 MB
 
 /** Generate a random upload session ID. */
 function newUploadId(): string {
