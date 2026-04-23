@@ -16,8 +16,13 @@ export function parseXlsxSheet(
   if (!sheet) {
     throw new ImportError(`Aba '${sheetName}' não encontrada na planilha`);
   }
-  const rows = XLSX.utils.sheet_to_json<Record<string, string>>(sheet, {
-    raw: false,
+  // `raw: true` + `cellDates: true` makes xlsx return Date objects for
+  // date-formatted cells and numbers for numeric cells — this is much more
+  // reliable than letting xlsx format them as strings with the system locale
+  // (which silently produces "8/15/25" vs "15/08/2025" depending on the
+  // user's machine). Our `toIsoDate` handles Date / number / string.
+  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
+    raw: true,
     defval: "",
   });
   if (rows.length === 0) {

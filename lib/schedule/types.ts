@@ -43,11 +43,55 @@ export class ImportError extends Error {
   }
 }
 
-export function toIsoDate(input: string | number | Date | null | undefined): string {
-  if (!input) throw new ImportError("Data ausente");
-  const d = input instanceof Date ? input : new Date(input);
+function pad2(n: number): string {
+  return String(n).padStart(2, "0");
+}
+
+/**
+ * Convert a raw cell value to an ISO date (YYYY-MM-DD).
+ *
+ * We handle Date objects and Excel-serial numbers (when the caller passes
+ * `raw: true`), ISO strings, and Brazilian `DD/MM/YYYY` strings — which is
+ * the natural format users type in Excel in pt-BR. We deliberately read
+ * local components instead of `toISOString()` so a Date built from local
+ * midnight (which Excel/XLSX does) doesn't shift to the previous day in
+ * negative UTC offsets.
+ */
+export function toIsoDate(
+  input: string | number | Date | null | undefined
+): string {
+  if (input === null || input === undefined || input === "") {
+    throw new ImportError("Data ausente");
+  }
+  if (input instanceof Date) {
+    if (isNaN(input.getTime())) throw new ImportError("Data inválida");
+    return `${input.getFullYear()}-${pad2(input.getMonth() + 1)}-${pad2(
+      input.getDate()
+    )}`;
+  }
+  if (typeof input === "string") {
+    const trimmed = input.trim();
+    // ISO YYYY-MM-DD (optionally followed by time) — take the date part.
+    const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(trimmed);
+    if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+    // Brazilian / European DD/MM/YYYY (accept -, / or . as separators,
+    // 2- or 4-digit year). 2-digit years follow the common convention:
+    // 70-99 → 19xx, 00-69 → 20xx.
+    const br = /^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/.exec(trimmed);
+    if (br) {
+      const [, d, m, yRaw] = br;
+      const year =
+        yRaw.length === 2
+          ? parseInt(yRaw, 10) >= 70
+            ? `19${yRaw}`
+            : `20${yRaw}`
+          : yRaw;
+      return `${year}-${pad2(Number(m))}-${pad2(Number(d))}`;
+    }
+  }
+  const d = new Date(input as string | number);
   if (isNaN(d.getTime())) throw new ImportError(`Data inválida: ${input}`);
-  return d.toISOString().slice(0, 10);
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 }
 
 export function diffDays(start: string, end: string): number {

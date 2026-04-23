@@ -125,12 +125,40 @@ function normalizeKey(k: string): string {
     .replace(/[^a-z0-9]/g, "");
 }
 
-function pick(row: Record<string, string>, keys: string[]): string | null {
-  const normalized: Record<string, string> = {};
+/**
+ * Look up a column by any of its aliases. Values can be strings, numbers,
+ * Date objects, etc. (xlsx.ts reads cells with `raw: true`, so numeric IDs
+ * come in as `number` and dates as `Date`). We keep non-string values
+ * intact for date columns — `toIsoDate` handles them directly — and
+ * stringify everything else so the rest of the pipeline stays string-based.
+ */
+function pick(
+  row: Record<string, unknown>,
+  keys: string[]
+): string | null {
+  const normalized: Record<string, unknown> = {};
   for (const k of Object.keys(row)) normalized[normalizeKey(k)] = row[k];
   for (const k of keys) {
     const v = normalized[normalizeKey(k)];
-    if (v !== undefined && v !== "") return v;
+    if (v === undefined || v === null || v === "") continue;
+    if (v instanceof Date) return v.toISOString();
+    return String(v).trim() || null;
+  }
+  return null;
+}
+
+function pickRaw(
+  row: Record<string, unknown>,
+  keys: string[]
+): string | number | Date | null {
+  const normalized: Record<string, unknown> = {};
+  for (const k of Object.keys(row)) normalized[normalizeKey(k)] = row[k];
+  for (const k of keys) {
+    const v = normalized[normalizeKey(k)];
+    if (v === undefined || v === null || v === "") continue;
+    if (v instanceof Date || typeof v === "number") return v;
+    const s = String(v).trim();
+    return s === "" ? null : s;
   }
   return null;
 }
@@ -148,30 +176,42 @@ export function parseCsv(content: string): ImportResult {
     throw new ImportError("CSV vazio");
   }
 
-  return rowsToResult(parsed.data, "csv");
+  return rowsToResult(parsed.data as Record<string, unknown>[], "csv");
 }
 
 export function rowsToResult(
-  rows: Record<string, string>[],
+  rows: Record<string, unknown>[],
   source: "csv" | "xlsx"
 ): ImportResult {
-  const out: NormalizedTask[] = rows.map((row, idx) => {
+  const out: NormalizedTask[] = [];
+  rows.forEach((row, idx) => {
     const name = pick(row, NAME_KEYS);
-    const start = pick(row, START_KEYS);
-    const end = pick(row, END_KEYS);
-    if (!name || !start || !end) {
-      throw new ImportError(
-        `Linha ${idx + 2}: colunas obrigatórias 'name', 'start' e 'end' são necessárias`
-      );
-    }
-    const startIso = toIsoDate(start);
-    const endIso = toIsoDate(end);
+    const startRaw = pickRaw(row, START_KEYS);
+    const endRaw = pickRaw(row, END_KEYS);
 
-    // Baseline / linha base / planned is optional. When it IS present in
-    // the file, parse and keep it distinct from the forecast dates — the
-    // dialog consumer is in charge of deciding what to do if it's null.
-    const baselineStartRaw = pick(row, BASELINE_START_KEYS);
-    const baselineEndRaw = pick(row, BASELINE_END_KEYS);
+    // Group / summary rows (e.g. "FT02 - OAES01", "Bloco", "No 5-Tarefa")
+    // don't carry Atividade + Inicio + Fim. Skip them silently so users can
+    // keep their natural multi-level layout in the spreadsheet without
+    // having to flatten it for the import.
+    if (!name || !startRaw || !endRaw) return;
+
+    let startIso: string;
+    let endIso: string;
+    try {
+      startIso = toIsoDate(startRaw);
+      endIso = toIsoDate(endRaw);
+    } catch {
+      // Unparseable dates on an otherwise-leaf row: skip rather than abort
+      // the whole import.
+      return;
+    }
+
+    // Baseline / linha base / planned is optional. When present, parse it
+    // independently of the forecast so the app can compare the two. The
+    // user's spreadsheet names these columns "Inicio BL" / "Fim BL" —
+    // already covered by BASELINE_{START,END}_KEYS.
+    const baselineStartRaw = pickRaw(row, BASELINE_START_KEYS);
+    const baselineEndRaw = pickRaw(row, BASELINE_END_KEYS);
     let baseline_start: string | null = null;
     let baseline_end: string | null = null;
     if (baselineStartRaw) {
@@ -196,7 +236,12 @@ export function rowsToResult(
           .map((s) => s.trim())
           .filter(Boolean)
       : [];
-    return {
+
+    out.push({
+      // Preserve the user-supplied ID as the stable external id — this is
+      // the key `matchTasksByStableId` uses to carry over 3D links across
+      // re-imports (the user explicitly asked to recognise the element
+      // link by the ID on every re-import).
       external_id: pick(row, ID_KEYS) ?? String(idx + 1),
       wbs: pick(row, WBS_KEYS),
       location: pick(row, LOCATION_KEYS),
@@ -210,8 +255,14 @@ export function rowsToResult(
       predecessors,
       parent_external_id: pick(row, PARENT_KEYS),
       sort_order: idx,
-    };
+    });
   });
+
+  if (out.length === 0) {
+    throw new ImportError(
+      "Nenhuma linha válida encontrada. A planilha deve conter as colunas: ID · Local · Atividade · Inicio · Fim · Inicio BL · Fim BL (apenas linhas com Atividade, Inicio e Fim são importadas)."
+    );
+  }
 
   return { source_type: source, tasks: out };
 }
