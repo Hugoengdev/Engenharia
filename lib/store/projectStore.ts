@@ -72,13 +72,16 @@ export const useProjectStore = create<ProjectState>((set) => ({
 
 /**
  * Classify a task against the simulation date. The 4D timeline is driven by
- * BASELINE dates (the "plan") — the forecast start/end are only used to
- * decide whether a completed task turns green (on-time / ahead) or red
- * (delayed). Both fields are never-null (enforced by the DB schema).
+ * the CURRENT/forecast dates (the "trend") — i.e. start_date / end_date —
+ * so the model reflects what's actually happening in the field. The
+ * baseline end is kept only to decide, once a task is done, whether it
+ * turns green (ended on or before baseline_end) or red (ended after
+ * baseline_end). All four date fields are never-null (enforced by the DB
+ * schema).
  */
 export function classifyTask(task: TaskRow, current: Date): TaskStatus {
-  const start = new Date(task.baseline_start);
-  const end = new Date(task.baseline_end);
+  const start = new Date(task.start_date);
+  const end = new Date(task.end_date);
   if (current < start) return "not_started";
   if (current >= end) return "done";
   return "in_progress";
