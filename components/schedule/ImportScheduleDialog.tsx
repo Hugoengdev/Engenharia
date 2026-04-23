@@ -34,6 +34,7 @@ import {
   type TaskWithLinks,
 } from "@/lib/store/projectStore";
 import { createClient } from "@/lib/supabase/client";
+import { chunkedInsert, fetchAllRows } from "@/lib/supabase/pagination";
 import type { TaskRow, TaskElementRow } from "@/lib/supabase/types";
 
 interface Props {
@@ -125,20 +126,29 @@ export function ImportScheduleDialog({
       let oldTasks: TaskRow[] = [];
       let oldLinks: TaskElementRow[] = [];
       if (replace && scheduleId) {
-        const [{ data: tRows }, { data: lRows }] = await Promise.all([
-          supabase
-            .from("tasks")
-            .select("*")
-            .eq("schedule_id", scheduleId),
-          supabase
-            .from("task_elements")
-            .select("task_id, ifc_global_id, tasks!inner(schedule_id)")
-            .eq("tasks.schedule_id", scheduleId),
+        // Both queries need paging: schedules with >1000 tasks would only
+        // have the first 1000 matched against, silently dropping 3D links
+        // for the rest on re-import.
+        const [tRows, lRows] = await Promise.all([
+          fetchAllRows<TaskRow>((from, to) =>
+            supabase
+              .from("tasks")
+              .select("*")
+              .eq("schedule_id", scheduleId)
+              .range(from, to)
+          ),
+          fetchAllRows<TaskElementRow>((from, to) =>
+            supabase
+              .from("task_elements")
+              .select("task_id, ifc_global_id, tasks!inner(schedule_id)")
+              .eq("tasks.schedule_id", scheduleId)
+              .range(from, to)
+          ),
         ]);
-        oldTasks = (tRows ?? []) as TaskRow[];
-        oldLinks = (lRows ?? []).map((l) => ({
-          task_id: (l as TaskElementRow).task_id,
-          ifc_global_id: (l as TaskElementRow).ifc_global_id,
+        oldTasks = tRows;
+        oldLinks = lRows.map((l) => ({
+          task_id: l.task_id,
+          ifc_global_id: l.ifc_global_id,
         }));
       }
 
@@ -196,13 +206,17 @@ export function ImportScheduleDialog({
         };
       });
 
-      const { data: inserted, error: insErr } = await supabase
-        .from("tasks")
-        .insert(rows)
-        .select("*");
-      if (insErr) throw insErr;
-
-      const insertedRows = (inserted ?? []) as TaskRow[];
+      // Chunked insert: for very large schedules a single insert can hit
+      // PostgREST's body size limit and/or time out. 500 rows per chunk is
+      // conservative and fits inside Vercel's serverless limits.
+      const insertedRows = await chunkedInsert<(typeof rows)[number], TaskRow>(
+        async (slice) => {
+          const res = await supabase.from("tasks").insert(slice).select("*");
+          return { data: res.data as TaskRow[] | null, error: res.error };
+        },
+        rows,
+        500
+      );
 
       // 5) Use the same matches to recover ifc_global_ids.
       const preserved = preservedLinksFromMatches(matches, oldLinks);
@@ -228,10 +242,22 @@ export function ImportScheduleDialog({
         }
       }
       if (elementRows.length > 0) {
-        const { error: linkErr } = await supabase
-          .from("task_elements")
-          .insert(elementRows);
-        if (linkErr) throw linkErr;
+        // Same chunking rationale as the tasks insert — large schedules
+        // can have thousands of preserved 3D links.
+        await chunkedInsert<(typeof elementRows)[number], { task_id: string }>(
+          async (slice) => {
+            const res = await supabase
+              .from("task_elements")
+              .insert(slice)
+              .select("task_id");
+            return {
+              data: res.data as { task_id: string }[] | null,
+              error: res.error,
+            };
+          },
+          elementRows,
+          1000
+        );
       }
 
       // 7) Update the store with the new tasks + their preserved links.

@@ -85,7 +85,10 @@ interface Props {
 // The "Atividade" (name) column is fluid (`minmax(min, 1fr)`) so the grid
 // always fills the container — no dead space on the right when the schedule
 // panel is wider than the sum of the fixed columns.
-const COL_ID = 40;
+// External IDs from the source file (MS Project UID, P6 activity_id, Excel
+// ID column) can be up to ~6 chars ("1234", "A.10.1", "2/4"). 64px fits
+// them without truncation while still being compact.
+const COL_ID = 64;
 // "Local" mirrors the spreadsheet column users import (e.g. "FT02 - OAES01").
 // Sized to comfortably fit those codes without squeezing the Atividade column.
 const COL_LOCATION = 110;
@@ -137,8 +140,31 @@ function compareTasks(
   column: SortColumn
 ): number {
   switch (column) {
-    case "id":
-      return a.sort_order - b.sort_order;
+    case "id": {
+      // The "ID" column now shows `external_id` (the ID coming from the
+      // source file), so sorting by it has to compare those values. When
+      // BOTH sides look like plain numbers we sort numerically so "12"
+      // comes before "112"; otherwise we fall back to a locale-aware
+      // string compare, and finally to `sort_order` as a tiebreaker to
+      // keep the import order stable.
+      const aStr = a.external_id ?? "";
+      const bStr = b.external_id ?? "";
+      const aNum = Number(aStr);
+      const bNum = Number(bStr);
+      if (
+        aStr !== "" &&
+        bStr !== "" &&
+        Number.isFinite(aNum) &&
+        Number.isFinite(bNum)
+      ) {
+        return aNum - bNum || a.sort_order - b.sort_order;
+      }
+      const cmp = aStr.localeCompare(bStr, "pt-BR", {
+        numeric: true,
+        sensitivity: "base",
+      });
+      return cmp !== 0 ? cmp : a.sort_order - b.sort_order;
+    }
     case "location":
       // Rows with no Local sink to the bottom so the grouped rows from the
       // same Local stay contiguous at the top of each direction.
@@ -223,14 +249,21 @@ export function GanttEditor({
     return () => ro.disconnect();
   }, [isMaximized]);
 
-  // Stable ID (1-based, based on sort_order) per task. Doesn't change when
-  // the user re-sorts the table by another column.
+  // ID displayed in the first column. We prefer the `external_id` from the
+  // source file (MS Project UID / P6 activity_id / Excel "ID" column) so
+  // users see *exactly* the identifier they have in their own spreadsheet.
+  // When a task was created manually inside the app and never got an
+  // external_id, we fall back to its 1-based position in the file order,
+  // so something always renders.
   const stableIdById = useMemo(() => {
     const sortedByOrder = [...tasks].sort(
       (a, b) => a.sort_order - b.sort_order
     );
-    const map = new Map<string, number>();
-    sortedByOrder.forEach((t, i) => map.set(t.id, i + 1));
+    const map = new Map<string, string>();
+    sortedByOrder.forEach((t, i) => {
+      const label = t.external_id?.trim();
+      map.set(t.id, label && label.length > 0 ? label : String(i + 1));
+    });
     return map;
   }, [tasks]);
 
@@ -611,7 +644,7 @@ interface TaskListBodyProps {
   selectedTaskId: string;
   setSelectedTask: (id: string) => void;
   originalTasks: TaskWithLinks[];
-  stableIdById: Map<string, number>;
+  stableIdById: Map<string, string>;
   onEdit: (id: string) => void;
 }
 
@@ -636,7 +669,7 @@ function TaskListBody({
         if (!full) return null;
         const isSelected = selectedTaskId === t.id;
         const linked = full.ifc_global_ids.length;
-        const stableId = stableIdById.get(t.id) ?? 0;
+        const stableId = stableIdById.get(t.id) ?? "";
 
         return (
           <div
@@ -752,7 +785,7 @@ interface StandaloneTaskListProps {
   ganttTasks: GanttTaskType[];
   selectedTaskId: string;
   setSelectedTask: (id: string) => void;
-  stableIdById: Map<string, number>;
+  stableIdById: Map<string, string>;
   onEdit: (id: string) => void;
   sort: SortState;
   onToggleSort: (column: SortColumn) => void;

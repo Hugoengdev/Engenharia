@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { ProjectWorkspace } from "@/components/app/ProjectWorkspace";
 import { adaptTasks } from "@/lib/schedule/adaptTasks";
 import { IfcUploader } from "@/components/app/IfcUploader";
+import { fetchAllRows } from "@/lib/supabase/pagination";
 import type {
   ProjectRow,
   ScheduleRow,
@@ -39,21 +40,31 @@ export default async function ProjectPage({
   let tasks: TaskRow[] = [];
   let links: TaskElementRow[] = [];
   if (schedule) {
-    const [{ data: tRows }, { data: lRows }] = await Promise.all([
-      supabase
-        .from("tasks")
-        .select("*")
-        .eq("schedule_id", schedule.id)
-        .order("sort_order", { ascending: true }),
-      supabase
-        .from("task_elements")
-        .select("*, tasks!inner(schedule_id)")
-        .eq("tasks.schedule_id", schedule.id),
+    // Page through BOTH queries — PostgREST caps `.select()` at 1000 rows
+    // by default, which silently truncates real-world schedules with
+    // thousands of activities (and their link rows). `fetchAllRows` loops
+    // 1000-row pages until the server returns a partial page.
+    const [tRows, lRows] = await Promise.all([
+      fetchAllRows<TaskRow>((from, to) =>
+        supabase
+          .from("tasks")
+          .select("*")
+          .eq("schedule_id", schedule.id)
+          .order("sort_order", { ascending: true })
+          .range(from, to)
+      ),
+      fetchAllRows<TaskElementRow>((from, to) =>
+        supabase
+          .from("task_elements")
+          .select("*, tasks!inner(schedule_id)")
+          .eq("tasks.schedule_id", schedule.id)
+          .range(from, to)
+      ),
     ]);
-    tasks = (tRows ?? []) as TaskRow[];
-    links = (lRows ?? []).map((l) => ({
-      task_id: (l as TaskElementRow).task_id,
-      ifc_global_id: (l as TaskElementRow).ifc_global_id,
+    tasks = tRows;
+    links = lRows.map((l) => ({
+      task_id: l.task_id,
+      ifc_global_id: l.ifc_global_id,
     }));
   }
 
