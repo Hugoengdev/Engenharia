@@ -105,6 +105,7 @@ export function parseMsProjectXml(xml: string): ImportResult {
     out.push({
       external_id: externalId,
       wbs: t.WBS ?? null,
+      location: null,
       name: t.Name,
       start_date: start,
       end_date: end,

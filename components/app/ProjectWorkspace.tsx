@@ -9,6 +9,7 @@ import { TimelinePlayer } from "@/components/timeline/TimelinePlayer";
 import { TaskElementLinker } from "@/components/linker/TaskElementLinker";
 import { ImportScheduleDialog } from "@/components/schedule/ImportScheduleDialog";
 import { MigrateToGithubButton } from "@/components/app/MigrateToGithubButton";
+import { QuantitySummaryBoxes } from "@/components/summary/QuantitySummaryBoxes";
 import {
   useProjectStore,
   type TaskWithLinks,
@@ -136,14 +137,19 @@ export function ProjectWorkspace({
         </div>
       </div>
 
-      <div className="flex flex-1 gap-2 overflow-hidden p-2">
+      {/* Two-row workspace:
+          - TOP row owns the 3D viewer on the left and the right panel
+            (quantity KPIs + linker) on a narrow column. Neither is tied
+            to the schedule, so the viewer keeps its original width and
+            the linker is never stretched to accommodate the Gantt.
+          - BOTTOM row gives the Gantt its own full-width strip (so all
+            its columns fit without dead space on the right) with the
+            timeline tucked to its left at a fixed compact width.
+          Maximize toggles collapse one of the rows entirely. */}
+      <div className="flex flex-1 flex-col gap-2 overflow-hidden p-2">
         {maximized !== "schedule" && (
-          <div
-            className={`relative grid min-w-0 grid-rows-[1fr_auto] gap-2 overflow-hidden ${
-              maximized === "viewer" ? "flex-1" : "flex-1"
-            }`}
-          >
-            <div className="relative overflow-hidden rounded-xl border border-border/60 bg-card/40">
+          <div className="flex min-h-0 flex-1 gap-2">
+            <div className="relative min-w-0 flex-1 overflow-hidden rounded-xl border border-border/60 bg-card/40">
               <IfcViewer
                 ifcUrl={ifcSignedUrl}
                 onSelect={setSelectedElement}
@@ -168,31 +174,43 @@ export function ProjectWorkspace({
                 )}
               </Button>
             </div>
-            <div>
-              <TimelinePlayer engine={engine} />
-            </div>
+            {maximized === null && (
+              <div className="flex w-[460px] shrink-0 flex-col gap-2 overflow-hidden">
+                <div className="shrink-0">
+                  <QuantitySummaryBoxes engine={engine} />
+                </div>
+                <div className="min-h-0 flex-1 overflow-y-auto">
+                  <TaskElementLinker
+                    engine={engine}
+                    selectedElement={selectedElement}
+                  />
+                </div>
+              </div>
+            )}
           </div>
         )}
 
+        {/* Bottom strip. Always rendered (even with the viewer maximized)
+            when a schedule exists so the user can keep scrubbing the 4D
+            timeline without having to restore the layout. The Gantt itself
+            is hidden in that case — just the TimelinePlayer stays on. */}
+        {maximized !== "schedule" && maximized === "viewer" && (
+          <div className="shrink-0">
+            <TimelinePlayer engine={engine} />
+          </div>
+        )}
         {maximized !== "viewer" && (
           <div
-            className={`flex flex-col gap-2 overflow-hidden ${
-              maximized === "schedule"
-                ? "min-w-0 flex-1"
-                : "w-[610px] shrink-0"
+            className={`flex min-h-0 gap-2 ${
+              maximized === "schedule" ? "flex-1" : "h-[42%] shrink-0"
             }`}
           >
-            {/* The linker can grow with its own content (task picker,
-                element counters, agrupamentos, property scan…), but we cap
-                it so the Gantt below always keeps enough room to show at
-                least a few rows. Overflow scrolls inside the linker. */}
-            <div className="max-h-[55%] shrink-0 overflow-y-auto">
-              <TaskElementLinker
-                engine={engine}
-                selectedElement={selectedElement}
-              />
-            </div>
-            <div className="relative min-h-0 flex-1 overflow-hidden rounded-xl border border-border/60 bg-card/40">
+            {maximized === null && (
+              <div className="w-[400px] shrink-0 overflow-hidden">
+                <TimelinePlayer engine={engine} />
+              </div>
+            )}
+            <div className="relative min-w-0 flex-1 overflow-hidden rounded-xl border border-border/60 bg-card/40">
               <GanttEditor
                 scheduleId={scheduleId}
                 onCreateSchedule={() => ensureSchedule("manual")}

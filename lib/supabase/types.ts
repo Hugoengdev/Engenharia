@@ -98,6 +98,7 @@ export interface Database {
           schedule_id: string;
           external_id: string | null;
           wbs: string | null;
+          location: string | null;
           name: string;
           start_date: string;
           end_date: string;
@@ -115,6 +116,7 @@ export interface Database {
           schedule_id: string;
           external_id?: string | null;
           wbs?: string | null;
+          location?: string | null;
           name: string;
           start_date: string;
           end_date: string;
@@ -132,6 +134,7 @@ export interface Database {
           schedule_id?: string;
           external_id?: string | null;
           wbs?: string | null;
+          location?: string | null;
           name?: string;
           start_date?: string;
           end_date?: string;

@@ -1,6 +1,12 @@
 export interface NormalizedTask {
   external_id: string | null;
   wbs: string | null;
+  /**
+   * Physical location / zone where the activity happens (e.g. "Pavimento 3").
+   * Distinct from `wbs` (hierarchical breakdown). `null` when the source file
+   * doesn't carry a location column.
+   */
+  location: string | null;
   name: string;
   start_date: string;
   end_date: string;

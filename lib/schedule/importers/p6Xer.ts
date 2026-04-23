@@ -106,6 +106,7 @@ export function parseP6Xer(content: string): ImportResult {
     return {
       external_id: r.task_id,
       wbs: r.wbs_id || null,
+      location: null,
       name: r.task_name || r.task_code || "Atividade sem nome",
       start_date: start,
       end_date: end,

@@ -102,6 +102,7 @@ export function parseP6Xml(xml: string): ImportResult {
     return {
       external_id: id,
       wbs: a.WBSObjectId ? String(a.WBSObjectId) : null,
+      location: null,
       name: String(a.Name ?? a.Id ?? "Atividade sem nome"),
       start_date: start,
       end_date: end,

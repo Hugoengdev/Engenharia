@@ -2,7 +2,7 @@ import { parseMsProjectXml } from "./msproject";
 import { parseP6Xml } from "./p6Xml";
 import { parseP6Xer } from "./p6Xer";
 import { parseCsv } from "./csv";
-import { parseXlsx } from "./xlsx";
+import { parseXlsx, listXlsxSheets, parseXlsxSheet } from "./xlsx";
 import { ImportError, type ImportResult } from "../types";
 
 export async function importScheduleFile(file: File): Promise<ImportResult> {
@@ -42,5 +42,7 @@ export {
   parseP6Xer,
   parseCsv,
   parseXlsx,
+  listXlsxSheets,
+  parseXlsxSheet,
   ImportError,
 };

@@ -98,6 +98,15 @@ const BASELINE_END_KEYS = [
   "plantermino",
 ];
 const WBS_KEYS = ["wbs", "edt"];
+const LOCATION_KEYS = [
+  "local",
+  "location",
+  "zona",
+  "zone",
+  "area",
+  "pavimento",
+  "ambiente",
+];
 const PROGRESS_KEYS = ["progress", "progresso", "percent", "percentcomplete"];
 const PRED_KEYS = ["predecessors", "predecessores", "pred"];
 const PARENT_KEYS = ["parent", "parentid", "pai"];
@@ -190,6 +199,7 @@ export function rowsToResult(
     return {
       external_id: pick(row, ID_KEYS) ?? String(idx + 1),
       wbs: pick(row, WBS_KEYS),
+      location: pick(row, LOCATION_KEYS),
       name,
       start_date: startIso,
       end_date: endIso,

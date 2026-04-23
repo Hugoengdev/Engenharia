@@ -12,7 +12,18 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { importScheduleFile } from "@/lib/schedule/importers";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  importScheduleFile,
+  listXlsxSheets,
+  parseXlsxSheet,
+} from "@/lib/schedule/importers";
 import type { ImportResult } from "@/lib/schedule/types";
 import {
   matchTasksByStableId,
@@ -46,17 +57,59 @@ export function ImportScheduleDialog({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [replace, setReplace] = useState(true);
+  // When the user picks an .xlsx we don't parse immediately — we first read
+  // the workbook, list the sheets and ask which one to import. The raw
+  // buffer is kept so the parse uses the exact same bytes the user picked.
+  const [xlsxBuffer, setXlsxBuffer] = useState<ArrayBuffer | null>(null);
+  const [xlsxSheets, setXlsxSheets] = useState<string[]>([]);
+  const [selectedSheet, setSelectedSheet] = useState<string>("");
+
+  function resetXlsxState() {
+    setXlsxBuffer(null);
+    setXlsxSheets([]);
+    setSelectedSheet("");
+  }
 
   async function handlePick(f: File | undefined | null) {
     setError(null);
     setParsed(null);
+    resetXlsxState();
     if (!f) return;
     setFile(f);
+
+    const isXlsx =
+      f.name.toLowerCase().endsWith(".xlsx") ||
+      f.name.toLowerCase().endsWith(".xls");
+
     try {
+      if (isXlsx) {
+        const buffer = await f.arrayBuffer();
+        const sheets = listXlsxSheets(buffer);
+        if (sheets.length === 0) {
+          throw new Error("Planilha sem abas");
+        }
+        setXlsxBuffer(buffer);
+        setXlsxSheets(sheets);
+        setSelectedSheet(sheets[0]);
+        // Don't parse yet — wait for the user to confirm the sheet.
+        return;
+      }
       const result = await importScheduleFile(f);
       setParsed(result);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao ler arquivo");
+    }
+  }
+
+  function handleParseSheet(sheetName: string) {
+    setError(null);
+    setParsed(null);
+    if (!xlsxBuffer) return;
+    try {
+      const result = parseXlsxSheet(xlsxBuffer, sheetName);
+      setParsed(result);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao ler aba");
     }
   }
 
@@ -129,6 +182,7 @@ export function ImportScheduleDialog({
           schedule_id: sid!,
           external_id: t.external_id,
           wbs: t.wbs,
+          location: t.location,
           name: t.name,
           start_date: t.start_date,
           end_date: t.end_date,
@@ -200,6 +254,7 @@ export function ImportScheduleDialog({
       onOpenChange(false);
       setFile(null);
       setParsed(null);
+      resetXlsxState();
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Erro ao importar";
       toast.error(msg);
@@ -216,6 +271,13 @@ export function ImportScheduleDialog({
           <DialogDescription>
             Aceita MS Project XML, Primavera P6 (XML/XER), CSV e Excel
             (.xlsx). Para .mpp, exporte como XML no MS Project.
+            <br />
+            <span className="mt-2 block text-xs">
+              Colunas esperadas no Excel:{" "}
+              <span className="font-mono text-foreground">
+                ID · Local · Atividade · Inicio · Fim · Inicio BL · Fim BL
+              </span>
+            </span>
           </DialogDescription>
         </DialogHeader>
 
@@ -265,6 +327,44 @@ export function ImportScheduleDialog({
             {error && (
               <p className="mt-2 text-xs text-destructive">{error}</p>
             )}
+          </div>
+        )}
+
+        {xlsxSheets.length > 0 && (
+          <div className="space-y-2 rounded-lg border border-border/60 bg-card/40 p-3">
+            <label className="text-xs font-medium text-foreground">
+              Selecione a aba do Excel
+            </label>
+            <div className="flex gap-2">
+              <Select
+                value={selectedSheet}
+                onValueChange={setSelectedSheet}
+                disabled={loading}
+              >
+                <SelectTrigger className="h-9 flex-1">
+                  <SelectValue placeholder="Escolha a aba" />
+                </SelectTrigger>
+                <SelectContent>
+                  {xlsxSheets.map((s) => (
+                    <SelectItem key={s} value={s}>
+                      {s}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => handleParseSheet(selectedSheet)}
+                disabled={!selectedSheet || loading}
+              >
+                Carregar aba
+              </Button>
+            </div>
+            <p className="text-[11px] leading-snug text-muted-foreground">
+              A aba deve conter as colunas: ID, Local, Atividade, Inicio, Fim,
+              Inicio BL, Fim BL.
+            </p>
           </div>
         )}
 

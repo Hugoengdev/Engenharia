@@ -80,27 +80,32 @@ interface Props {
   isMaximized?: boolean;
 }
 
-// Column widths (total = LIST_WIDTH). Two date pairs: forecast (tendência)
-// and baseline (linha de base). 4D uses baseline; color compares to forecast.
-// Kept tight so the whole grid fits on a half-width schedule panel.
+// Column widths. Two date pairs: forecast (tendência) and baseline (linha
+// de base). 4D uses baseline; color compares to forecast.
+// The "Atividade" (name) column is fluid (`minmax(min, 1fr)`) so the grid
+// always fills the container — no dead space on the right when the schedule
+// panel is wider than the sum of the fixed columns.
 const COL_ID = 40;
-const COL_NAME = 170;
+const COL_NAME_MIN = 170;
 const COL_DURATION = 54;
 const COL_START = 68;
 const COL_END = 68;
 const COL_BASE_START = 68;
 const COL_BASE_END = 68;
 const COL_ACTIONS = 32;
+// LIST_WIDTH is the *minimum* width the list needs — used when the Gantt
+// library wants a fixed number for `listCellWidth`. The actual render grows
+// the Name column beyond this whenever extra horizontal room is available.
 const LIST_WIDTH =
   COL_ID +
-  COL_NAME +
+  COL_NAME_MIN +
   COL_DURATION +
   COL_START +
   COL_END +
   COL_BASE_START +
   COL_BASE_END +
   COL_ACTIONS;
-const GRID_TEMPLATE = `${COL_ID}px ${COL_NAME}px ${COL_DURATION}px ${COL_START}px ${COL_END}px ${COL_BASE_START}px ${COL_BASE_END}px ${COL_ACTIONS}px`;
+const GRID_TEMPLATE = `${COL_ID}px minmax(${COL_NAME_MIN}px, 1fr) ${COL_DURATION}px ${COL_START}px ${COL_END}px ${COL_BASE_START}px ${COL_BASE_END}px ${COL_ACTIONS}px`;
 
 // gantt-task-react default headerHeight. We bumped it a bit to give room to
 // the "Tendência" / "Linha de base" group labels above the date columns.
@@ -442,17 +447,20 @@ function TaskListHeader({
       className="select-none border-b border-r border-border/60 bg-secondary/50 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/90"
       style={{ height: headerHeight, fontFamily }}
     >
-      {/* Group-row: spans IDs/Name/Duration as a single cell, then splits the
-          two date pairs with soft labels. */}
+      {/* Group-row: the left portion (ID+Name+Duration) is a single fluid
+          span that matches the `minmax(min, 1fr)` name column below, then
+          the two date pairs get soft labels, ending with an actions cell. */}
       <div
         className="grid border-b border-border/40 text-[9px]"
         style={{
           height: topRowH,
-          gridTemplateColumns: `${COL_ID + COL_NAME + COL_DURATION}px ${
+          gridTemplateColumns: `${COL_ID}px minmax(${COL_NAME_MIN}px, 1fr) ${COL_DURATION}px ${
             COL_START + COL_END
           }px ${COL_BASE_START + COL_BASE_END}px ${COL_ACTIONS}px`,
         }}
       >
+        <div />
+        <div />
         <div />
         <div className="flex items-center justify-center border-l border-border/40 text-primary/80">
           Tendência

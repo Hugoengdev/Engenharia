@@ -129,8 +129,36 @@ export class ViewerEngine {
 
   onSelect: ((info: ElementInfo | null) => void) | null = null;
   onSelectionChange: ((globalIds: string[]) => void) | null = null;
+  // Legacy single-slot listener (ClassificationBrowser still wires into it).
+  // New consumers should use `addClassificationsListener()` so multiple
+  // components (e.g. the linker browser AND the quantity summary boxes)
+  // can react to the same events without stomping on each other.
   onClassificationsReady: ((summary: ClassificationSummary) => void) | null =
     null;
+  private classificationsListeners = new Set<
+    (summary: ClassificationSummary) => void
+  >();
+
+  addClassificationsListener(
+    cb: (summary: ClassificationSummary) => void
+  ): () => void {
+    this.classificationsListeners.add(cb);
+    return () => {
+      this.classificationsListeners.delete(cb);
+    };
+  }
+
+  private emitClassifications() {
+    const summary = this.classificationSummary;
+    this.onClassificationsReady?.(summary);
+    for (const cb of this.classificationsListeners) {
+      try {
+        cb(summary);
+      } catch (err) {
+        console.warn("[viewer] classifications listener threw:", err);
+      }
+    }
+  }
 
   // Cached classification summary for the currently loaded model. Populated
   // after loadIfc() finishes, consumed by the linker UI.
@@ -628,7 +656,7 @@ export class ViewerEngine {
     }
 
     this.classificationSummary = this.computeSummary();
-    this.onClassificationsReady?.(this.classificationSummary);
+    this.emitClassifications();
   }
 
   private systemEntries(systemKey: string): GroupingEntry[] {
@@ -727,7 +755,7 @@ export class ViewerEngine {
         properties: [],
         propertiesScanned: true,
       };
-      this.onClassificationsReady?.(this.classificationSummary);
+      this.emitClassifications();
       return this.classificationSummary;
     }
 
@@ -880,7 +908,7 @@ export class ViewerEngine {
       properties,
       propertiesScanned: true,
     };
-    this.onClassificationsReady?.(this.classificationSummary);
+    this.emitClassifications();
     return this.classificationSummary;
   }
 
@@ -894,6 +922,44 @@ export class ViewerEngine {
     const set = bucket.get(value);
     if (!set) return [];
     return Array.from(set);
+  }
+
+  /**
+   * Flatten a property bucket into a per-globalId numeric map. Used by the
+   * quantity summary (volume / area / count accumulated over the timeline).
+   * Values that can't be parsed as a number are dropped — a property like
+   * "ExtendedProperties::Material" doesn't make sense to sum, so it simply
+   * returns an empty map and the UI can disable the box.
+   *
+   * When the same globalId appears under more than one value of the same
+   * property (rare, but possible with overlapping psets), we keep the
+   * highest number so "Volume" never ends up double-counted.
+   */
+  getQuantityForProperty(propertyKey: string): Map<string, number> {
+    const bucket = this.propertyIndex.get(propertyKey);
+    if (!bucket) return new Map();
+    const out = new Map<string, number>();
+    for (const [rawValue, gids] of bucket.entries()) {
+      const n = Number(rawValue);
+      if (!Number.isFinite(n)) continue;
+      for (const gid of gids) {
+        const prev = out.get(gid);
+        if (prev === undefined || n > prev) out.set(gid, n);
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Return only the PropertyGroups that look like numeric quantities, so the
+   * summary dropdown doesn't get polluted with strings like material names
+   * or Revit categories. A group is considered numeric when at least one of
+   * its distinct values parses to a finite number.
+   */
+  getNumericPropertyGroups(): PropertyGroup[] {
+    return this.classificationSummary.properties.filter((g) =>
+      g.values.some((v) => Number.isFinite(Number(v.key)))
+    );
   }
 
   fitToScene() {

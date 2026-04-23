@@ -151,40 +151,58 @@ export function TimelinePlayer({ engine }: Props) {
     });
   }, [engine, tasks, currentDate, selectedTaskId]);
 
-  // Animation loop
+  // Live refs so the animation loop reads the *current* values without
+  // re-subscribing the effect on every frame. Keeping `currentDate` in the
+  // dependency array caused the effect to tear down/rebuild at every tick
+  // — and when React's render was slow (many components on screen), an
+  // orphaned rAF from a previous effect instance would fire with a stale
+  // closure of `currentDate` and overwrite the store with an older date,
+  // making the timeline visibly walk *backwards*.
+  const currentDateRef = useRef<Date | null>(currentDate);
+  const playSpeedRef = useRef<number>(playSpeed);
   useEffect(() => {
-    if (!isPlaying || !bounds || !currentDate || !effectiveStart) return;
+    currentDateRef.current = currentDate;
+  }, [currentDate]);
+  useEffect(() => {
+    playSpeedRef.current = playSpeed;
+  }, [playSpeed]);
+
+  // Animation loop — depends only on play state + bounds. Reads the live
+  // date/speed from the refs above.
+  useEffect(() => {
+    if (!isPlaying || !bounds || !effectiveStart) return;
     const totalMs = bounds.max.getTime() - effectiveStart.getTime();
     if (totalMs <= 0) return;
     let last = performance.now();
+    let cancelled = false;
 
     const step = (now: number) => {
-      const dt = now - last;
+      if (cancelled) return;
+      const dt = Math.max(0, now - last);
       last = now;
-      // 1x = traverse full timeline in 30 seconds
-      const advance = (dt / 30000) * playSpeed * totalMs;
-      const next = new Date(currentDate.getTime() + advance);
-      if (next.getTime() >= bounds.max.getTime()) {
+      const current = currentDateRef.current ?? effectiveStart;
+      // 1x = traverse full timeline in 30 seconds. Clamped positive so a
+      // weird `performance.now()` hop (tab throttling, etc.) can never
+      // push the date backwards.
+      const advance = Math.max(
+        0,
+        (dt / 30000) * playSpeedRef.current * totalMs
+      );
+      const nextMs = current.getTime() + advance;
+      if (nextMs >= bounds.max.getTime()) {
         setCurrentDate(bounds.max);
         setPlaying(false);
         return;
       }
-      setCurrentDate(next);
+      setCurrentDate(new Date(nextMs));
       rafRef.current = requestAnimationFrame(step);
     };
     rafRef.current = requestAnimationFrame(step);
     return () => {
+      cancelled = true;
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
-  }, [
-    isPlaying,
-    bounds,
-    currentDate,
-    effectiveStart,
-    playSpeed,
-    setCurrentDate,
-    setPlaying,
-  ]);
+  }, [isPlaying, bounds, effectiveStart, setCurrentDate, setPlaying]);
 
   async function persistStatusDate(value: string | null) {
     if (!scheduleId) {
@@ -261,21 +279,26 @@ export function TimelinePlayer({ engine }: Props) {
   const editorDirty = statusEditor !== toDateInputValue(statusDate);
 
   return (
-    <Card className="border-border/60 p-4">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <div className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+    <Card className="border-border/60 px-3 py-2">
+      {/* Row 1 — current date on the left, transport controls on the right.
+          Kept intentionally dense so the whole player fits under the viewer
+          even on narrower screens now that the Gantt owns more horizontal
+          space. */}
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <div className="text-[9px] uppercase tracking-[0.16em] text-muted-foreground">
             Data atual
           </div>
-          <div className="font-mono text-base font-semibold">
+          <div className="truncate font-mono text-sm font-semibold leading-tight">
             {formatDate(currentDate ?? start)}
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-1">
           <Button
             size="icon"
             variant="outline"
             onClick={toStart}
+            className="h-7 w-7"
             title={
               statusDate &&
               effectiveStart &&
@@ -284,35 +307,44 @@ export function TimelinePlayer({ engine }: Props) {
                 : "Ir para o início"
             }
           >
-            <SkipBack className="h-4 w-4" />
+            <SkipBack className="h-3.5 w-3.5" />
           </Button>
           <Button
             size="icon"
             onClick={() => setPlaying(!isPlaying)}
             disabled={!currentDate}
+            className="h-7 w-7"
           >
             {isPlaying ? (
-              <Pause className="h-4 w-4" />
+              <Pause className="h-3.5 w-3.5" />
             ) : (
-              <Play className="h-4 w-4" />
+              <Play className="h-3.5 w-3.5" />
             )}
           </Button>
-          <Button size="icon" variant="outline" onClick={toEnd}>
-            <SkipForward className="h-4 w-4" />
+          <Button
+            size="icon"
+            variant="outline"
+            onClick={toEnd}
+            className="h-7 w-7"
+          >
+            <SkipForward className="h-3.5 w-3.5" />
           </Button>
           <Button
             size="sm"
             variant="outline"
             onClick={nextSpeed}
-            className="font-mono"
+            className="h-7 px-2 font-mono text-xs"
+            title="Velocidade de reprodução"
           >
-            <Gauge className="h-3.5 w-3.5" />
+            <Gauge className="h-3 w-3" />
             {playSpeed}x
           </Button>
         </div>
       </div>
 
-      <div className="mt-4">
+      {/* Row 2 — scrubber. Labels stay inline so we don't spend a line
+          just on the bounds. */}
+      <div className="mt-2">
         <Slider
           value={[sliderValue]}
           min={0}
@@ -320,89 +352,95 @@ export function TimelinePlayer({ engine }: Props) {
           step={1}
           onValueChange={setFromSlider}
         />
-        <div className="mt-1 flex justify-between text-[10px] font-mono text-muted-foreground">
-          <span>
+        <div className="mt-0.5 flex justify-between font-mono text-[9px] text-muted-foreground">
+          <span className="truncate">
             {formatDate(start)}
             {statusDate &&
               start.getTime() === statusDate.getTime() && (
                 <span className="ml-1 text-primary">• data de status</span>
               )}
           </span>
-          <span>{formatDate(bounds.max)}</span>
+          <span className="truncate">{formatDate(bounds.max)}</span>
         </div>
       </div>
 
-      <div className="mt-4 flex flex-wrap items-center gap-2">
-        <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
-          <CalendarClock className="h-3.5 w-3.5 text-primary" />
-          Data de status
+      {/* Row 3 — status date editor inline with the stats chips. The chips
+          shrink from full cards to compact pills; the information (label +
+          number) is preserved, just packed more tightly. */}
+      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+        <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1 text-[9px] uppercase tracking-[0.12em] text-muted-foreground">
+            <CalendarClock className="h-3 w-3 text-primary" />
+            Status
+          </div>
+          <input
+            type="date"
+            value={statusEditor}
+            onChange={(e) => setStatusEditor(e.target.value)}
+            min={toDateInputValue(bounds.min)}
+            max={toDateInputValue(bounds.max)}
+            className="h-7 rounded-md border border-border/60 bg-background px-1.5 font-mono text-[11px] text-foreground outline-none focus:border-primary/60"
+            disabled={!scheduleId || savingStatus}
+          />
+          {editorDirty && (
+            <Button
+              size="icon"
+              onClick={handleSaveStatus}
+              disabled={savingStatus || !scheduleId}
+              className="h-7 w-7"
+              title="Salvar data de status"
+            >
+              <Check className="h-3.5 w-3.5" />
+            </Button>
+          )}
+          {statusDate && !editorDirty && (
+            <Button
+              size="icon"
+              variant="outline"
+              onClick={handleClearStatus}
+              disabled={savingStatus}
+              className="h-7 w-7"
+              title="Limpar data de status"
+            >
+              <X className="h-3.5 w-3.5" />
+            </Button>
+          )}
         </div>
-        <input
-          type="date"
-          value={statusEditor}
-          onChange={(e) => setStatusEditor(e.target.value)}
-          min={toDateInputValue(bounds.min)}
-          max={toDateInputValue(bounds.max)}
-          className="h-8 rounded-md border border-border/60 bg-background px-2 text-xs font-mono text-foreground outline-none focus:border-primary/60"
-          disabled={!scheduleId || savingStatus}
-        />
-        {editorDirty && (
-          <Button
-            size="sm"
-            onClick={handleSaveStatus}
-            disabled={savingStatus || !scheduleId}
-            className="h-8"
-          >
-            <Check className="h-3.5 w-3.5" />
-            Salvar
-          </Button>
-        )}
-        {statusDate && !editorDirty && (
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={handleClearStatus}
-            disabled={savingStatus}
-            className="h-8"
-          >
-            <X className="h-3.5 w-3.5" />
-            Limpar
-          </Button>
-        )}
-        {!statusDate && !editorDirty && (
-          <span className="text-[11px] text-muted-foreground">
-            Tarefas finalizadas antes dessa data já aparecem construídas.
-          </span>
-        )}
+
+        <div className="ml-auto flex flex-wrap items-center gap-1.5 text-[11px]">
+          <StatPill
+            color="bg-secondary"
+            label="Pendente"
+            value={stats.notStarted}
+          />
+          <StatPill
+            color="bg-yellow-500"
+            label="Em execução"
+            value={stats.inProgress}
+          />
+          <StatPill
+            color="bg-green-500"
+            label="No prazo"
+            value={stats.doneOnTime}
+          />
+          <StatPill
+            color="bg-red-500"
+            label="Atrasada"
+            value={stats.doneDelayed}
+          />
+        </div>
       </div>
 
-      <div className="mt-4 grid grid-cols-4 gap-2 text-xs">
-        <Stat
-          color="bg-secondary"
-          label="Pendente"
-          value={stats.notStarted}
-        />
-        <Stat
-          color="bg-yellow-500"
-          label="Em execução"
-          value={stats.inProgress}
-        />
-        <Stat
-          color="bg-green-500"
-          label="No prazo"
-          value={stats.doneOnTime}
-        />
-        <Stat
-          color="bg-red-500"
-          label="Atrasada"
-          value={stats.doneDelayed}
-        />
-      </div>
+      {!statusDate && !editorDirty && (
+        <p className="mt-1 text-[10px] leading-snug text-muted-foreground">
+          Tarefas finalizadas antes da data de status já aparecem construídas.
+        </p>
+      )}
     </Card>
   );
 }
 
-function Stat({
+function StatPill({
   color,
   label,
   value,
@@ -412,12 +450,12 @@ function Stat({
   value: number;
 }) {
   return (
-    <div className="rounded-md border border-border/60 bg-secondary/30 p-2">
-      <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
-        <span className={`h-1.5 w-1.5 rounded-full ${color}`} />
-        {label}
-      </div>
-      <div className="mt-1 font-mono text-sm font-semibold">{value}</div>
+    <div className="flex items-center gap-1 rounded-md border border-border/60 bg-secondary/30 px-1.5 py-0.5">
+      <span className={`h-1.5 w-1.5 rounded-full ${color}`} />
+      <span className="text-[10px] text-muted-foreground">{label}</span>
+      <span className="font-mono text-[11px] font-semibold tabular-nums">
+        {value}
+      </span>
     </div>
   );
 }
