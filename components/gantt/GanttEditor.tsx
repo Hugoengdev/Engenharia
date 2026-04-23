@@ -86,6 +86,9 @@ interface Props {
 // always fills the container — no dead space on the right when the schedule
 // panel is wider than the sum of the fixed columns.
 const COL_ID = 40;
+// "Local" mirrors the spreadsheet column users import (e.g. "FT02 - OAES01").
+// Sized to comfortably fit those codes without squeezing the Atividade column.
+const COL_LOCATION = 110;
 const COL_NAME_MIN = 170;
 const COL_DURATION = 54;
 const COL_START = 68;
@@ -98,6 +101,7 @@ const COL_ACTIONS = 32;
 // the Name column beyond this whenever extra horizontal room is available.
 const LIST_WIDTH =
   COL_ID +
+  COL_LOCATION +
   COL_NAME_MIN +
   COL_DURATION +
   COL_START +
@@ -105,7 +109,7 @@ const LIST_WIDTH =
   COL_BASE_START +
   COL_BASE_END +
   COL_ACTIONS;
-const GRID_TEMPLATE = `${COL_ID}px minmax(${COL_NAME_MIN}px, 1fr) ${COL_DURATION}px ${COL_START}px ${COL_END}px ${COL_BASE_START}px ${COL_BASE_END}px ${COL_ACTIONS}px`;
+const GRID_TEMPLATE = `${COL_ID}px ${COL_LOCATION}px minmax(${COL_NAME_MIN}px, 1fr) ${COL_DURATION}px ${COL_START}px ${COL_END}px ${COL_BASE_START}px ${COL_BASE_END}px ${COL_ACTIONS}px`;
 
 // gantt-task-react default headerHeight. We bumped it a bit to give room to
 // the "Tendência" / "Linha de base" group labels above the date columns.
@@ -114,6 +118,7 @@ const HEADER_H = 60;
 // ---------- sorting ----------
 export type SortColumn =
   | "id"
+  | "location"
   | "name"
   | "duration"
   | "start"
@@ -134,6 +139,14 @@ function compareTasks(
   switch (column) {
     case "id":
       return a.sort_order - b.sort_order;
+    case "location":
+      // Rows with no Local sink to the bottom so the grouped rows from the
+      // same Local stay contiguous at the top of each direction.
+      return (a.location ?? "\uffff").localeCompare(
+        b.location ?? "\uffff",
+        "pt-BR",
+        { sensitivity: "base" }
+      );
     case "name":
       return a.name.localeCompare(b.name, "pt-BR", { sensitivity: "base" });
     case "duration":
@@ -454,11 +467,12 @@ function TaskListHeader({
         className="grid border-b border-border/40 text-[9px]"
         style={{
           height: topRowH,
-          gridTemplateColumns: `${COL_ID}px minmax(${COL_NAME_MIN}px, 1fr) ${COL_DURATION}px ${
+          gridTemplateColumns: `${COL_ID}px ${COL_LOCATION}px minmax(${COL_NAME_MIN}px, 1fr) ${COL_DURATION}px ${
             COL_START + COL_END
           }px ${COL_BASE_START + COL_BASE_END}px ${COL_ACTIONS}px`,
         }}
       >
+        <div />
         <div />
         <div />
         <div />
@@ -482,6 +496,13 @@ function TaskListHeader({
           label="ID"
           column="id"
           align="center"
+          sort={sort}
+          onToggle={onToggleSort}
+        />
+        <SortHeaderCell
+          label="Local"
+          column="location"
+          align="start"
           sort={sort}
           onToggle={onToggleSort}
         />
@@ -648,6 +669,14 @@ function TaskListBody({
               >
                 {stableId}
               </span>
+            </div>
+            <div
+              className="min-w-0 truncate px-2 text-[11px] text-muted-foreground/90"
+              title={full.location ?? ""}
+            >
+              {full.location ?? (
+                <span className="text-muted-foreground/40">—</span>
+              )}
             </div>
             <div className="flex min-w-0 items-center gap-2 px-3">
               <DelayDot task={full} />
@@ -979,6 +1008,7 @@ function EditTaskDialog({ taskId, onClose, onSaved }: EditTaskDialogProps) {
   );
 
   const [name, setName] = useState("");
+  const [location, setLocation] = useState("");
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
   const [baselineStart, setBaselineStart] = useState("");
@@ -989,6 +1019,7 @@ function EditTaskDialog({ taskId, onClose, onSaved }: EditTaskDialogProps) {
   useEffect(() => {
     if (!originalTask) return;
     setName(originalTask.name);
+    setLocation(originalTask.location ?? "");
     setStart(originalTask.start_date);
     setEnd(originalTask.end_date);
     setBaselineStart(originalTask.baseline_start);
@@ -1021,8 +1052,12 @@ function EditTaskDialog({ taskId, onClose, onSaved }: EditTaskDialogProps) {
     setSaving(true);
     try {
       const supabase = createClient();
+      const trimmedLocation = location.trim();
       const update = {
         name: name.trim() || originalTask.name,
+        // Empty string → null so the column keeps its "sem local" semantics
+        // (rendered as a dash in the list and ignored by the sort tail).
+        location: trimmedLocation === "" ? null : trimmedLocation,
         start_date: start,
         end_date: end,
         baseline_start: baselineStart,
@@ -1060,14 +1095,25 @@ function EditTaskDialog({ taskId, onClose, onSaved }: EditTaskDialogProps) {
           <DialogTitle>Editar tarefa</DialogTitle>
         </DialogHeader>
         <form onSubmit={handleSave} className="space-y-5">
-          <div className="space-y-2">
-            <Label htmlFor="edit-name">Nome</Label>
-            <Input
-              id="edit-name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              required
-            />
+          <div className="grid grid-cols-[1fr_180px] gap-3">
+            <div className="space-y-2">
+              <Label htmlFor="edit-name">Nome</Label>
+              <Input
+                id="edit-name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-location">Local</Label>
+              <Input
+                id="edit-location"
+                value={location}
+                onChange={(e) => setLocation(e.target.value)}
+                placeholder="Ex.: FT02 - OAES01"
+              />
+            </div>
           </div>
 
           <div className="space-y-2">
